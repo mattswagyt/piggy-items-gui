@@ -1,0 +1,267 @@
+--!strict
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+
+-- ========================
+-- UI Setup
+-- ========================
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "ItemsGUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = player:WaitForChild("PlayerGui")
+
+local Frame = Instance.new("Frame")
+Frame.Size = UDim2.new(0, 350, 0, 250)
+Frame.Position = UDim2.new(0.7, 0, 0.2, 0)
+Frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+Frame.BorderSizePixel = 0
+Frame.AnchorPoint = Vector2.new(0.5, 0)
+Frame.Visible = false
+Frame.Parent = ScreenGui
+
+-- Title Bar for draggable
+local TitleBar = Instance.new("Frame")
+TitleBar.Size = UDim2.new(1, 0, 0, 30)
+TitleBar.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+TitleBar.BorderSizePixel = 0
+TitleBar.Parent = Frame
+
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Text = "Items GUI - By BMF"
+TitleLabel.Size = UDim2.new(1, 0, 1, 0)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.TextSize = 18
+TitleLabel.Parent = TitleBar
+
+-- Make the frame draggable
+local dragging = false
+local dragInput, dragStart, startPos
+
+local function updateDrag(input)
+	local delta = input.Position - dragStart
+	Frame.Position = UDim2.new(
+		startPos.X.Scale,
+		startPos.X.Offset + delta.X,
+		startPos.Y.Scale,
+		startPos.Y.Offset + delta.Y
+	)
+end
+
+TitleBar.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		dragging = true
+		dragStart = input.Position
+		startPos = Frame.Position
+
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				dragging = false
+			end
+		end)
+	end
+end)
+
+TitleBar.InputChanged:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseMovement then
+		dragInput = input
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if input == dragInput and dragging then
+		updateDrag(input)
+	end
+end)
+
+-- Scrolling frame
+local ScrollFrame = Instance.new("ScrollingFrame")
+ScrollFrame.Size = UDim2.new(1, 0, 1, -30)
+ScrollFrame.Position = UDim2.new(0, 0, 0, 30)
+ScrollFrame.BackgroundTransparency = 1
+ScrollFrame.ScrollBarThickness = 6
+ScrollFrame.Parent = Frame
+
+local UIGrid = Instance.new("UIGridLayout")
+UIGrid.CellSize = UDim2.new(0, 80, 0, 80)
+UIGrid.CellPadding = UDim2.new(0, 5, 0, 5)
+UIGrid.SortOrder = Enum.SortOrder.LayoutOrder
+UIGrid.Parent = ScrollFrame
+
+-- Toggle GUI
+UserInputService.InputBegan:Connect(function(input, processed)
+	if not processed and input.KeyCode == Enum.KeyCode.Insert then
+		Frame.Visible = not Frame.Visible
+	end
+end)
+
+-- ========================
+-- Helper Functions
+-- ========================
+
+-- Cache thumbnails
+local itemButtons = {}
+
+local function createThumbnail(item)
+	local box = Instance.new("ImageButton")
+	box.Size = UDim2.new(0, 80, 0, 80)
+	box.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+	box.BorderSizePixel = 0
+	box.AutoButtonColor = true
+
+	local viewport = Instance.new("ViewportFrame")
+	viewport.Size = UDim2.new(1, 0, 1, 0)
+	viewport.BackgroundTransparency = 1
+	viewport.Parent = box
+
+	local clone = item:Clone()
+	clone.Parent = viewport
+	clone.CFrame = CFrame.new(0, 0, 0)
+
+	local cam = Instance.new("Camera")
+	cam.Parent = viewport
+	cam.CFrame = CFrame.new(Vector3.new(5,5,5), Vector3.new(0,0,0))
+	viewport.CurrentCamera = cam
+
+	return box
+end
+
+-- Logic
+local activePickup = false
+
+local function interactWithItem(item)
+	if activePickup then return end
+	activePickup = true
+
+	local character = player.Character
+	if not character then 
+		activePickup = false
+		return 
+	end
+	
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+
+	if not humanoid or not hrp then 
+		activePickup = false
+		return 
+	end
+
+	-- Save original position
+	local originalCFrame = hrp.CFrame
+
+	-- 🔥 Anti-ragdoll setup
+	local oldState = humanoid:GetState()
+	humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+	humanoid.PlatformStand = true
+	humanoid.AutoRotate = false
+
+	-- Optional: zero velocity (prevents fling)
+	hrp.AssemblyLinearVelocity = Vector3.zero
+	hrp.AssemblyAngularVelocity = Vector3.zero
+
+	-- Offset (very close to item)
+	local offsetDistance = 0.25
+	local offset = -(item.CFrame.LookVector * offsetDistance)
+
+	local targetPos = item.Position + offset
+
+	-- 🔥 Smooth micro-teleport instead of instant snap
+	hrp.CFrame = CFrame.new(targetPos, item.Position)
+
+	-- Monitor pickup
+	local connection
+	connection = RunService.RenderStepped:Connect(function()
+		if not item or not item.Parent then
+			if connection then
+				connection:Disconnect()
+			end
+
+			task.wait(0.05)
+
+			-- Restore position
+			if hrp and character then
+				hrp.CFrame = originalCFrame
+			end
+
+			-- 🔥 Restore humanoid safely
+			if humanoid then
+				humanoid.PlatformStand = false
+				humanoid.AutoRotate = true
+				humanoid:ChangeState(oldState or Enum.HumanoidStateType.Running)
+			end
+
+			activePickup = false
+		end
+	end)
+end
+
+-- Detect ItemFolder dynamically (reliable for Piggy)
+local currentFolder
+local function getItemFolder()
+	for _, folder in ipairs(workspace:GetChildren()) do
+		if folder:IsA("Folder") then
+			for _, obj in ipairs(folder:GetChildren()) do
+				if (obj:IsA("BasePart") or obj:IsA("UnionOperation")) and obj:FindFirstChildOfClass("ClickDetector") then
+					return folder
+				end
+			end
+		end
+	end
+	return nil
+end
+
+-- Refresh UI only when needed (updates on item pick up / folder change)
+local function refreshUI()
+	local folder = getItemFolder()
+
+	-- Build a list of VALID items (visible + has ClickDetector)
+	local validItems = {}
+
+	if folder then
+		for _, item in ipairs(folder:GetChildren()) do
+			if (item:IsA("BasePart") or item:IsA("UnionOperation"))
+				and item:FindFirstChildOfClass("ClickDetector")
+				and item.Transparency < 1 then
+
+				table.insert(validItems, item)
+			end
+		end
+	end
+
+	-- If nothing changed, don't refresh
+	if folder == currentFolder and #validItems == #itemButtons then
+		return
+	end
+
+	currentFolder = folder
+
+	-- Clear old buttons
+	for _, btn in pairs(itemButtons) do
+		btn:Destroy()
+	end
+	itemButtons = {}
+
+	-- Rebuild UI
+	for _, item in ipairs(validItems) do
+		local btn = createThumbnail(item)
+		btn.Parent = ScrollFrame
+
+		btn.MouseButton1Click:Connect(function()
+			interactWithItem(item)
+		end)
+
+		table.insert(itemButtons, btn)
+	end
+end
+
+-- ========================
+-- Main Loop
+-- ========================
+RunService.RenderStepped:Connect(function()
+	refreshUI()
+end)
